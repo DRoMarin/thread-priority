@@ -49,6 +49,8 @@ fn errno() -> libc::c_int {
                 *libc::__errno()
             } else if #[cfg(target_os = "linux")] {
                 *libc::__errno_location()
+            } else if #[cfg(target_os = "vxworks")]{
+                libc::errnoGet()
             } else if #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))] {
                 *libc::__error()
             } else {
@@ -58,6 +60,7 @@ fn errno() -> libc::c_int {
     }
 }
 
+#[cfg(not(target_os = "vxworks"))]
 fn set_errno(number: libc::c_int) {
     unsafe {
         cfg_if::cfg_if! {
@@ -110,6 +113,7 @@ pub struct SchedAttr {
     sched_util_max: u32,
 }
 
+#[cfg(not(target_os = "vxworks"))]
 impl ScheduleParams {
     fn into_posix(self) -> libc::sched_param {
         let mut param = unsafe { MaybeUninit::<libc::sched_param>::zeroed().assume_init() };
@@ -118,6 +122,21 @@ impl ScheduleParams {
     }
 
     fn from_posix(sched_param: libc::sched_param) -> Self {
+        ScheduleParams {
+            sched_priority: sched_param.sched_priority,
+        }
+    }
+}
+
+#[cfg(target_os = "vxworks")]
+impl ScheduleParams {
+    fn into_posix(self) -> libc::_Sched_param {
+        let mut param = unsafe { MaybeUninit::<libc::_Sched_param>::zeroed().assume_init() };
+        param.sched_priority = self.sched_priority;
+        param
+    }
+
+    fn from_posix(sched_param: libc::_Sched_param) -> Self {
         ScheduleParams {
             sched_priority: sched_param.sched_priority,
         }
@@ -569,6 +588,29 @@ pub fn set_thread_priority_and_policy(
         ThreadSchedulePolicy::Realtime(RealtimeThreadSchedulePolicy::Deadline) => {
             set_thread_priority_and_policy_deadline(native, priority)
         }
+        #[cfg(target_os = "vxworks")]
+        _ => {
+            let fixed_priority = priority.to_posix(policy)?;
+
+            let params = ScheduleParams {
+                sched_priority: fixed_priority,
+            }
+            .into_posix();
+
+            let ret = unsafe {
+                libc::pthread_setschedparam(
+                    native,
+                    policy.to_posix(),
+                    &params as *const libc::_Sched_param,
+                )
+            };
+            match ret {
+                0 => Ok(()),
+                e => Err(Error::OS(e)),
+            }
+        }
+
+        #[cfg(not(target_os = "vxworks"))]
         _ => {
             let fixed_priority = priority.to_posix(policy)?;
             // On macOS and iOS it is possible to set the priority
@@ -674,6 +716,14 @@ pub fn thread_schedule_policy_param(
         let mut policy = 0i32;
         let mut params = ScheduleParams { sched_priority: 0 }.into_posix();
 
+        #[cfg(target_os = "vxworks")]
+        let ret = libc::pthread_getschedparam(
+            native,
+            &mut policy as *mut libc::c_int,
+            &mut params as *mut libc::_Sched_param,
+        );
+
+        #[cfg(not(target_os = "vxworks"))]
         let ret = libc::pthread_getschedparam(
             native,
             &mut policy as *mut libc::c_int,
