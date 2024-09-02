@@ -245,8 +245,12 @@ impl std::error::Error for Error {}
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ThreadPriorityValue(u8);
 impl ThreadPriorityValue {
+    #[cfg(not(target_os = "vxworks"))]
     /// The maximum value for a thread priority.
     pub const MAX: u8 = 99;
+    #[cfg(target_os = "vxworks")]
+    /// The maximum value for a thread priority.
+    pub const MAX: u8 = 255;
     /// The minimum value for a thread priority.
     pub const MIN: u8 = 0;
 }
@@ -254,12 +258,17 @@ impl ThreadPriorityValue {
 impl std::convert::TryFrom<u8> for ThreadPriorityValue {
     type Error = &'static str;
 
+    #[cfg(not(target_os = "vxworks"))]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if (Self::MIN..=Self::MAX).contains(&value) {
             Ok(Self(value))
         } else {
             Err("The value is not in the range of [0;99]")
         }
+    }
+    #[cfg(target_os = "vxworks")]
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(Self(value))
     }
 }
 

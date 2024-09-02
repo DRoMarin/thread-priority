@@ -10,6 +10,8 @@ use std::convert::TryFrom;
 use libc::SCHED_NORMAL as SCHED_OTHER;
 #[cfg(not(target_os = "android"))]
 use libc::SCHED_OTHER;
+//#[cfg(target_os = "vxworks")]
+//use libc::SCHED_SPORADIC;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use libc::{SCHED_BATCH, SCHED_IDLE};
 use libc::{SCHED_FIFO, SCHED_RR};
@@ -133,6 +135,16 @@ impl ScheduleParams {
     fn into_posix(self) -> libc::_Sched_param {
         let mut param = unsafe { MaybeUninit::<libc::_Sched_param>::zeroed().assume_init() };
         param.sched_priority = self.sched_priority;
+        param.sched_ss_low_priority = 0;
+        param.sched_ss_repl_period = libc::_Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        param.sched_ss_init_budget = libc::_Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        param.sched_ss_max_repl = 0;
         param
     }
 
@@ -368,6 +380,11 @@ impl ThreadPriority {
                     } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
                         // macOS/iOS allows specifying the priority using sched params.
                         get_edge_priority(policy)
+                    } else if #[cfg(target_os = "vxworks")] {
+                            Ok(match edge {
+                                PriorityPolicyEdgeValueType::Minimum => NICENESS_MIN as libc::c_int,
+                                PriorityPolicyEdgeValueType::Maximum => NICENESS_MAX as libc::c_int,
+                            })
                     } else {
                         Err(Error::Priority(
                             "Unsupported thread priority for this OS. Change the scheduling policy or use a supported OS.",
@@ -860,12 +877,17 @@ pub fn thread_native_id() -> ThreadId {
 impl TryFrom<u8> for ThreadPriority {
     type Error = &'static str;
 
+    #[cfg(not(target_os = "vxworks"))]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if let 0..=100 = value {
             Ok(ThreadPriority::Crossplatform(ThreadPriorityValue(value)))
         } else {
             Err("The thread priority value must be in range of [0; 100].")
         }
+    }
+    #[cfg(target_os = "vxworks")]
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(ThreadPriority::Crossplatform(ThreadPriorityValue(value)))
     }
 }
 
